@@ -92,7 +92,7 @@ class HeadMatchedMultiHeadAttension(Module):
 
 
 class KeyPair(Module):
-    def __init__(self, kdim: int, vdim: int, embed_dim: int = None, bias: bool = True):
+    def __init__(self, kdim: int, vdim: int, embed_dim: int = None, bias: bool = True ,dropout: float = .0):
         """
         KeyとValueを結合するモジュール。
 
@@ -109,9 +109,21 @@ class KeyPair(Module):
         if embed_dim == None:
             embed_dim = kdim+vdim
         self.layer = nn.Sequential(
-            nn.Linear(kdim+vdim, embed_dim, bias=bias),
+            nn.Linear(kdim+vdim, 2*(kdim+vdim), bias=bias),
+            nn.RReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(2*(kdim+vdim), embed_dim, bias=bias),
             nn.RReLU()
         )
+        # ↓ こっちのほうがいいかも
+        #self.layer = nn.Sequential(
+        #    nn.Linear(kdim+vdim, embed_dim, bias=bias),
+        #    nn.RReLU()
+        #)
+        torch.nn.init.kaiming_uniform_(
+            self.layer[0].weight, mode='fan_in', nonlinearity='relu')
+        torch.nn.init.kaiming_uniform_(
+            self.layer[-2].weight, mode='fan_in', nonlinearity='relu')
         
 
     def forward(self, K: Tensor, V: Tensor):
@@ -145,6 +157,8 @@ class FeedForwardNetwork(Module):
         )
         torch.nn.init.kaiming_uniform_(
             self.layer[0].weight, mode='fan_in', nonlinearity='relu')
+        torch.nn.init.kaiming_uniform_(
+            self.layer[-1].weight, mode='fan_in')
 
     def forward(self, X: Tensor):
         return self.layer.forward(X)
@@ -168,9 +182,9 @@ class DeductionNetworkPartialLayer(Module):
         self.attn = HeadMatchedMultiHeadAttension(
             embeded_dim, num_heads, kdim=embeded_dim, vdim=vdim, dropout=dropout
         )
-        self.ln1 = nn.LayerNorm(vdim)
-        self.ffn = FeedForwardNetwork(vdim, dropout=dropout)
-        self.ln2 = nn.LayerNorm(vdim)
+        self.ln1 = nn.LayerNorm(embeded_dim)
+        self.ffn = FeedForwardNetwork(embeded_dim, dropout=dropout)
+        self.ln2 = nn.LayerNorm(embeded_dim)
 
     def forward(self, Q_embeded: Tensor, K_embeded: Tensor, V: Tensor):
         X, _ = self.attn.forward(Q_embeded, K_embeded, V)
@@ -180,7 +194,7 @@ class DeductionNetworkPartialLayer(Module):
 
 
 class CDeductionNetworkPartialLayer(Module):
-    def __init__(self, qdim: int, kdim: int, vdim: int, num_heads: int, bias: bool = True, dropout: float = .0):
+    def __init__(self, qdim: int, kdim: int, vdim: int,embed_dim:int, num_heads: int, bias: bool = True, dropout: float = .0):
         """
         部分的な演驛ネットワークレイヤー
 
@@ -196,18 +210,22 @@ class CDeductionNetworkPartialLayer(Module):
             入力のQueryとKeyを結合し、部分的な演驛ネットワークを適用します。
         """
         super().__init__()
-        self.Embedding = KeyPair(qdim,kdim, vdim, bias=bias)
+        self.Embedding = KeyPair(qdim, kdim, embed_dim, bias=bias, dropout=dropout)
+        self.VEmbedding = FeedForwardNetwork(vdim,out_dim=embed_dim)
+        self.lastLayer = FeedForwardNetwork(embed_dim, out_dim=vdim)
         self.DedQK = DeductionNetworkPartialLayer(
-            vdim, vdim, num_heads, dropout)
+            embed_dim, embed_dim, num_heads, dropout
+        )
 
     def forward(self, Q: Tensor, K: Tensor, targetQ: Tensor, targetK: Tensor, V: Tensor):
         EmbIn = self.Embedding.forward(Q,K)
         EmbTarget = self.Embedding.forward(targetQ, targetK)
-        return self.DedQK.forward(EmbIn, EmbTarget, V)
+        DedQK = self.DedQK.forward(EmbIn, EmbTarget, self.VEmbedding.forward(V))
+        return self.lastLayer.forward(EmbIn+DedQK)
 
 
 class DeductionNetworkLayer(Module):
-    def __init__(self, qdim: int, kdim: int, vdim: int, num_heads: int, bias: bool = True, dropout: float = .0):
+    def __init__(self, qdim: int, kdim: int, vdim: int, embed_dim: int, num_heads: int, bias: bool = True, dropout: float = .0):
         """
         演驛ネットワークレイヤー
 
@@ -224,6 +242,7 @@ class DeductionNetworkLayer(Module):
         """
         super().__init__()
         factory_kwargs = {
+            'embed_dim': embed_dim,
             'num_heads': num_heads,
             'bias': bias,
             'dropout': dropout
@@ -243,7 +262,7 @@ class DeductionNetworkLayer(Module):
 
 
 class DeductionNetwork(Module):
-    def __init__(self, qdim: int, kdim: int, vdim: int, table_size: int, num_layers: int, num_heads: int,bias:bool=True,dropout: float=.0,device=None, dtype=None):
+    def __init__(self, qdim: int, kdim: int, vdim: int,embed_dim: int, table_size: int, num_layers: int, num_heads: int,bias:bool=True,dropout: float=.0,device=None, dtype=None):
         """
         演驛ネットワークモジュール。
 
@@ -276,6 +295,7 @@ class DeductionNetwork(Module):
             ]
         )
         layer_kwargs = {
+            'embed_dim': embed_dim,
             'num_heads': num_heads,
             'bias': bias,
             'dropout': dropout
@@ -355,7 +375,7 @@ def train(epochs: int = 100):
     data_sets = 100
     #Q, K, V = createAddingData(data_sets)
     #print(Q, K, V)
-    DedN = DeductionNetwork(1, 1, 1, 2000, 8, 8, dropout=.25)
+    DedN = DeductionNetwork(1, 1, 1, 2, 2000, 8, 8, dropout=.25)
     optimizer = optim.AdamW(DedN.parameters(), lr=.01)
     mean_errs = []  # mean_errを保存するリストを作成
     for epoch in range(epochs):
