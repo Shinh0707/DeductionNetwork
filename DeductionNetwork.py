@@ -5,27 +5,38 @@ from math import sqrt
 import torch
 import torch.nn as nn
 import numpy as np
+from numpy.random import randint
 from torch.nn import Module
 from torch import SymInt, Tensor, unsqueeze
 from torch.nn import functional as F
 from torch.nn import init
 import torch.optim as optim
 from torch.nn.parameter import Parameter
+import torch.onnx
 
+# Function to Convert to ONNX
+
+
+def Convert_ONNX(model: Module, dummy_input: Tensor, input_names: list[str], output_names: list[str], model_name: str):
+
+    # set the model to inference mode
+    model.eval()
+
+    # Export the model
+    torch.onnx.export(model,         # model being run
+                      # model input (or a tuple for multiple inputs)
+                      dummy_input,
+                      f"{model_name}.onnx",       # where to save the model
+                      export_params=True,  # store the trained parameter weights inside the model file
+                      opset_version=11,    # the ONNX version to export the model to
+                      do_constant_folding=True,  # whether to execute constant folding for optimization
+                      input_names=input_names,   # the model's input names
+                      output_names=output_names,  # the model's output names
+                      )
+    print(" ")
+    print('Model has been converted to ONNX')
 
 def get_nearest_divisor(n: int, start: int, prefer_low: bool = True, must_low: bool = True):
-    """
-    指定した数の最も近い約数を取得します。
-
-    Args:
-        n (int): 入力数。
-        start (int): 探索を開始する値。
-        prefer_low (bool, optional): Trueの場合、低い値を優先します。Falseの場合、高い値を優先します。デフォルトはTrue。
-        must_low (bool, optional): Trueの場合、開始値以下の約数を検索します。デフォルトはTrue。
-
-    Returns:
-        int: nの最も近い約数。
-    """
     if n % start == 0:
         return start
     if must_low:
@@ -45,25 +56,6 @@ def get_nearest_divisor(n: int, start: int, prefer_low: bool = True, must_low: b
 
 class HeadMatchedMultiHeadAttension(Module):
     def __init__(self, embed_dim: int, num_heads: int, dropout=0.0, bias=True, add_bias_kv=False, add_zero_attn=False, kdim=None, vdim=None, batch_first=False, device=None, dtype=None):
-        """
-        ヘッド数をembed_dimに合わせたMulti-head Attentionレイヤー
-
-        Args:
-            embed_dim (int): 入力の埋め込み次元数。
-            num_heads (int): アテンションヘッドの数。
-            dropout (float, optional): ドロップアウトの確率。デフォルトは0.0。
-            bias (bool, optional): バイアス項を含むかどうか。デフォルトはTrue。
-            add_bias_kv (bool, optional): bias_kvを追加するかどうか。デフォルトはFalse。
-            add_zero_attn (bool, optional): zero_attnを追加するかどうか。デフォルトはFalse。
-            kdim (int, optional): keyベクトルの次元数。デフォルトはNone。
-            vdim (int, optional): valueベクトルの次元数。デフォルトはNone。
-            batch_first (bool, optional): 入力の形式がバッチサイズを先頭に持つかどうか。デフォルトはFalse。
-            device (torch.device, optional): デバイスオプション。デフォルトはNone。
-            dtype (torch.dtype, optional): データタイプオプション。デフォルトはNone。
-
-        Forward:
-            入力Q、K、Vに対してMulti-head Attentionを適用し、出力を返します。
-        """
         super().__init__()
         num_heads = get_nearest_divisor(embed_dim,num_heads)
         self.attn = nn.MultiheadAttention(
@@ -93,38 +85,16 @@ class HeadMatchedMultiHeadAttension(Module):
 
 class KeyPair(Module):
     def __init__(self, kdim: int, vdim: int, embed_dim: int = None, bias: bool = True ,dropout: float = .0):
-        """
-        KeyとValueを結合するモジュール。
-
-        Args:
-            kdim (int): keyベクトルの次元数。
-            vdim (int): valueベクトルの次元数。
-            embed_dim (int, optional): 結合後の埋め込み次元数。デフォルトはNone。
-            bias (bool, optional): バイアス項を含むかどうか。デフォルトはTrue。
-
-        Forward:
-            入力のKeyとValueを結合し、線形層と活性化関数を適用して出力します。
-        """
         super().__init__()
         if embed_dim == None:
             embed_dim = kdim+vdim
         self.layer = nn.Sequential(
-            nn.Linear(kdim+vdim, 2*(kdim+vdim), bias=bias),
-            nn.RReLU(),
+            nn.Linear(kdim+vdim, embed_dim, bias=bias),
             nn.Dropout(dropout),
-            nn.Linear(2*(kdim+vdim), embed_dim, bias=bias),
-            nn.RReLU()
+            nn.RReLU()  # 絶対に負の値が必要
         )
-        # ↓ こっちのほうがいいかも
-        #self.layer = nn.Sequential(
-        #    nn.Linear(kdim+vdim, embed_dim, bias=bias),
-        #    nn.RReLU()
-        #)
-        torch.nn.init.kaiming_uniform_(
-            self.layer[0].weight, mode='fan_in', nonlinearity='relu')
-        torch.nn.init.kaiming_uniform_(
-            self.layer[-2].weight, mode='fan_in', nonlinearity='relu')
-        
+        init.kaiming_uniform_(
+            self.layer[0].weight, mode='fan_in', nonlinearity='leaky_relu')
 
     def forward(self, K: Tensor, V: Tensor):
         return self.layer.forward(torch.cat((K, V), dim=-1))
@@ -132,18 +102,6 @@ class KeyPair(Module):
 
 class FeedForwardNetwork(Module):
     def __init__(self, in_dim: int, hid_dim: int | None = None, out_dim: int | None = None, dropout: float = .0):
-        """
-        Feed Forward Networkモジュール。
-
-        Args:
-            in_dim (int): 入力の次元数。
-            hid_dim (int, optional): 隠れ層の次元数。デフォルトはNone。
-            out_dim (int, optional): 出力の次元数。デフォルトはNone。
-            dropout (float, optional): ドロップアウトの確率。デフォルトは0.0。
-
-        Forward:
-            入力に対して線形層、活性化関数、ドロップアウトを適用し、出力します。
-        """
         super().__init__()
         if hid_dim == None:
             hid_dim = in_dim * 2
@@ -151,13 +109,13 @@ class FeedForwardNetwork(Module):
             out_dim = in_dim
         self.layer = nn.Sequential(
             nn.Linear(in_dim, hid_dim),
-            nn.LeakyReLU(),
+            nn.LeakyReLU(),  # nn.ReLU() # Attension Is All you needのFeedForward準拠ならReLUにすべき
             nn.Dropout(dropout),
             nn.Linear(hid_dim, out_dim)
         )
-        torch.nn.init.kaiming_uniform_(
-            self.layer[0].weight, mode='fan_in', nonlinearity='relu')
-        torch.nn.init.kaiming_uniform_(
+        init.kaiming_uniform_(
+            self.layer[0].weight, mode='fan_in', nonlinearity='leaky_relu')
+        init.kaiming_uniform_(
             self.layer[-1].weight, mode='fan_in')
 
     def forward(self, X: Tensor):
@@ -166,21 +124,9 @@ class FeedForwardNetwork(Module):
 
 class DeductionNetworkPartialLayer(Module):
     def __init__(self, embeded_dim: int, vdim: int, num_heads: int, dropout: float = .0):
-        """
-        部分的な演驛ネットワークレイヤー。
-
-        Args:
-            embeded_dim (int): 埋め込み次元数。
-            vdim (int): valueベクトルの次元数。
-            num_heads (int): アテンションヘッドの数。
-            dropout (float, optional): ドロップアウトの確率。デフォルトは0.0。
-
-        Forward:
-            Multi-head AttentionとFeed Forward Networkを適用し、出力を返します。
-        """
         super().__init__()
         self.attn = HeadMatchedMultiHeadAttension(
-            embeded_dim, num_heads, kdim=embeded_dim, vdim=vdim, dropout=dropout
+            embeded_dim, num_heads, kdim=embeded_dim, vdim=vdim, dropout=dropout, batch_first=True
         )
         self.ln1 = nn.LayerNorm(embeded_dim)
         self.ffn = FeedForwardNetwork(embeded_dim, dropout=dropout)
@@ -195,20 +141,6 @@ class DeductionNetworkPartialLayer(Module):
 
 class CDeductionNetworkPartialLayer(Module):
     def __init__(self, qdim: int, kdim: int, vdim: int,embed_dim:int, num_heads: int, bias: bool = True, dropout: float = .0):
-        """
-        部分的な演驛ネットワークレイヤー
-
-        Args:
-            qdim (int): queryベクトルの次元数。
-            kdim (int): keyベクトルの次元数。
-            vdim (int): valueベクトルの次元数。
-            num_heads (int): アテンションヘッドの数。
-            bias (bool, optional): バイアス項を含むかどうか。デフォルトはTrue。
-            dropout (float, optional): ドロップアウトの確率。デフォルトは0.0。
-        
-        Forward:
-            入力のQueryとKeyを結合し、部分的な演驛ネットワークを適用します。
-        """
         super().__init__()
         self.Embedding = KeyPair(qdim, kdim, embed_dim, bias=bias, dropout=dropout)
         self.VEmbedding = FeedForwardNetwork(vdim,out_dim=embed_dim)
@@ -226,20 +158,6 @@ class CDeductionNetworkPartialLayer(Module):
 
 class DeductionNetworkLayer(Module):
     def __init__(self, qdim: int, kdim: int, vdim: int, embed_dim: int, num_heads: int, bias: bool = True, dropout: float = .0):
-        """
-        演驛ネットワークレイヤー
-
-        Args:
-            qdim (int): queryベクトルの次元数。
-            kdim (int): keyベクトルの次元数。
-            vdim (int): valueベクトルの次元数。
-            num_heads (int): アテンションヘッドの数。
-            bias (bool, optional): バイアス項を含むかどうか。デフォルトはTrue。
-            dropout (float, optional): ドロップアウトの確率。デフォルトは0.0。
-        
-        Forward:
-            入力のQuery、Key、Valueに演驛ネットワークを適用し、出力を返します。
-        """
         super().__init__()
         factory_kwargs = {
             'embed_dim': embed_dim,
@@ -263,34 +181,16 @@ class DeductionNetworkLayer(Module):
 
 class DeductionNetwork(Module):
     def __init__(self, qdim: int, kdim: int, vdim: int,embed_dim: int, table_size: int, num_layers: int, num_heads: int,bias:bool=True,dropout: float=.0,device=None, dtype=None):
-        """
-        演驛ネットワークモジュール。
-
-        Args:
-            qdim (int): queryベクトルの次元数。
-            kdim (int): keyベクトルの次元数。
-            vdim (int): valueベクトルの次元数。
-            table_size (int): 内部パラメータのテーブルサイズ。
-            num_layers (int): レイヤーの数。
-            num_heads (int): アテンションヘッドの数。
-            bias (bool, optional): バイアス項を含むかどうか。デフォルトはTrue。
-            dropout (float, optional): ドロップアウトの確率。デフォルトは0.0。
-            device (torch.device, optional): デバイスオプション。デフォルトはNone。
-            dtype (torch.dtype, optional): データタイプオプション。デフォルトはNone。
-        
-        Forward:
-            入力のQuery、Key、Valueに演驛ネットワークを適用し、出力を返します。
-        """
         super().__init__()
         factory_kwargs = {'requires_grad': True,
                           'device': device, 'dtype': dtype}
         self.InternalParameters = nn.ParameterList(
             [
-                Parameter(torch.empty(table_size, qdim,
+                Parameter(torch.empty(1,table_size, qdim,
                           **factory_kwargs), True),
-                Parameter(torch.empty(table_size, kdim,
+                Parameter(torch.empty(1,table_size, kdim,
                           **factory_kwargs), True),
-                Parameter(torch.empty(table_size, vdim, 
+                Parameter(torch.empty(1,table_size, vdim, 
                           **factory_kwargs), True)
             ]
         )
@@ -321,101 +221,191 @@ class DeductionNetwork(Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
-        # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
-        # https://github.com/pytorch/pytorch/issues/57109
-        for i in range(len(self.InternalParameters)):
-            init.xavier_uniform_(self.InternalParameters[i],
-                                 gain=nn.init.calculate_gain('tanh'))
+        for param in self.InternalParameters:
+            init.kaiming_uniform_(param, mode='fan_in')
+            # init.xavier_uniform_(param,
+            #                     gain=nn.init.calculate_gain('tanh'))
 
     def DedLayerForward(self, Q: Tensor, K: Tensor, layers: list[DeductionNetworkLayer], Ql: Tensor, Kl: Tensor, Vl: Tensor):
         for l in layers:
             Ql, Kl, Vl = l.forward(Q, K, Ql, Kl, Vl)
         return Vl
 
-    def forward(self, Q, K, V):
+    def forward(self, Q, K, V, batch_size:int = None):
+        assert not (Q == None and K == None and V == None and batch_size == None) ,"If you want to all parameters are None, please at least set any number to batch_size (ex. 1)"
+        batch_size, _, _ = Q.shape if Q is not None else K.shape if K is not None else V.shape if V is not None else (batch_size, 0, 0)
         if Q == None:
-            assert K != None and V != None, "K and V must not be None"
+            # assert K != None and V != None, "K and V must not be None"
+            if K == None:
+                lK = self.InternalParameters[1][:,
+                                                randint(0, self.InternalParameters[1].shape[1]), :].expand(batch_size, -1, -1)
+            else:
+                lK = K
+            if V == None:
+                lV = self.InternalParameters[2][:,
+                                                randint(0, self.InternalParameters[2].shape[1]), :].expand(batch_size, -1, -1)
+            else:
+                lV = V
             Q = self.DedLayerForward(
-                K, V, self.KVlayers,
-                Ql=self.InternalParameters[1],
-                Kl=self.InternalParameters[2],
-                Vl=self.InternalParameters[0]
+                lK, lV, self.KVlayers,
+                Ql=self.InternalParameters[1].expand(batch_size, -1, -1),
+                Kl=self.InternalParameters[2].expand(batch_size, -1, -1),
+                Vl=self.InternalParameters[0].expand(batch_size, -1, -1)
             )
         if K == None:
-            assert Q != None and V != None, "Q and V must not be None"
+            # assert Q != None and V != None, "Q and V must not be None"
+            if Q == None:
+                lQ = self.InternalParameters[0][:,
+                                                randint(0, self.InternalParameters[0].shape[1]), :].expand(batch_size, -1, -1)
+            else:
+                lQ = Q
+            if V == None:
+                lV = self.InternalParameters[2][:,
+                                                randint(0, self.InternalParameters[2].shape[1]), :].expand(batch_size, -1, -1)
+            else:
+                lV = V
             K = self.DedLayerForward(
-                Q, V, self.QVlayers,
-                Ql=self.InternalParameters[0],
-                Kl=self.InternalParameters[2],
-                Vl=self.InternalParameters[1]
+                lQ, lV, self.QVlayers,
+                Ql=self.InternalParameters[0].expand(batch_size, -1, -1),
+                Kl=self.InternalParameters[2].expand(batch_size, -1, -1),
+                Vl=self.InternalParameters[1].expand(batch_size, -1, -1)
             )
         if V == None:
-            assert Q != None and K != None, "Q and K must not be None"
+            # assert Q != None and K != None, "Q and K must not be None"
+            if Q == None:
+                lQ = self.InternalParameters[0][:,
+                                                randint(0, self.InternalParameters[0].shape[1]), :].expand(batch_size, -1, -1)
+            else:
+                lQ = Q
+            if K == None:
+                lK = self.InternalParameters[1][:,
+                                                randint(0, self.InternalParameters[1].shape[1]), :].expand(batch_size, -1, -1)
+            else:
+                lK = K
             V = self.DedLayerForward(
-                Q, K, self.QKlayers,
-                Ql=self.InternalParameters[0],
-                Kl=self.InternalParameters[1],
-                Vl=self.InternalParameters[2]
+                lQ, lK, self.QKlayers,
+                Ql=self.InternalParameters[0].expand(batch_size, -1, -1),
+                Kl=self.InternalParameters[1].expand(batch_size, -1, -1),
+                Vl=self.InternalParameters[2].expand(batch_size, -1, -1)
             )
         return Q, K, V
 
 
 # 足し算を検証してみる
-def createAddingData(dataset: int = 100,max_val: float=100):
+def createAddingData(dataset: int = 100, max_val: float = 100, normalize_base: float = 100):
     # A + B = C ができるかどうか
     # Q : A, K : B, V : C
     C = np.random.randint(1, int(max_val), dataset)
     A = np.asarray([np.random.randint(0, c) for c in C])
     B = C-A
-    return torch.tensor(A/max_val).unsqueeze(-1).float(), torch.tensor(B/max_val).unsqueeze(-1).float(), torch.tensor(C/max_val).unsqueeze(-1).float()
+    return torch.tensor(A/normalize_base).unsqueeze(-1).unsqueeze(1).float(), torch.tensor(B/normalize_base).unsqueeze(-1).unsqueeze(1).float(), torch.tensor(C/normalize_base).unsqueeze(-1).unsqueeze(1).float()
 
+
+# 剰余を検証してみる
+def createModData(dataset: int = 100, max_val: float = 100, normalize_base: float= 100):
+    # A % B = C ができるかどうか
+    # Q : A, K : B, V : C
+    A = np.random.randint(1, int(max_val), dataset)
+    B = np.asarray([np.random.randint(1, a+1) for a in A])
+    C = A%B
+    return torch.tensor(A/normalize_base).unsqueeze(-1).unsqueeze(1).float(), torch.tensor(B/normalize_base).unsqueeze(-1).unsqueeze(1).float(), torch.tensor(C/normalize_base).unsqueeze(-1).unsqueeze(1).float()
+
+# ベクトルの差を検証してみる
+def createSubVectorData(dataset: int = 100):
+    # A + B = C ができるかどうか
+    # Q : A, K : B, V : C
+    A = np.random.rand(dataset, 1, 2)
+    B = np.random.rand(dataset, 1, 2)
+    C = A-B
+    return torch.tensor(A).float(), torch.tensor(B).float(), torch.tensor(C).float()
 
 def train(epochs: int = 100):
     data_sets = 100
     #Q, K, V = createAddingData(data_sets)
     #print(Q, K, V)
-    DedN = DeductionNetwork(1, 1, 1, 2, 2000, 8, 8, dropout=.25)
+    DedN = DeductionNetwork(2, 2, 2, 8, 100, 4, 8, dropout=.25) # 特徴次元の４倍くらいの大きさの埋め込み次元があれば良さそう（ヒューリスティック）
+    # テーブルサイズを変えてもあまり結果は変わらない。計算時間は微妙に伸びるし収束が遅くなる。変化量が小さくなる。必要最低限でいい。
+    # テーブルサイズの大きさに比例して実行時間が伸びる(1000単位)、テーブルサイズが小さいと精度が下がる。
+    # テーブルサイズが小さいほど精度が上がる！？？？→上がらない・限界をすぐ迎える
+    # テーブルサイズ0でも動く(?)
+    # 結論：特徴次元が大事、テーブルサイズを上げると時間が経つにつれて大きく誤差が減るようになって精度がいい
     optimizer = optim.AdamW(DedN.parameters(), lr=.01)
-    mean_errs = []  # mean_errを保存するリストを作成
+    total_errs = []  # mean_errを保存するリストを作成
+    v_errs = []
+    k_errs = []
+    q_errs = []
     for epoch in range(epochs):
         print(f"Epoch {epoch}")
-        partial_mean_err = 0
-        for i in range(data_sets):
-            Q,K,V = createAddingData(1,data_sets*100)
-            optimizer.zero_grad()
-            _, _, lV = DedN.forward(
-                Q, K, None
+        Q, K, V = createSubVectorData(data_sets)
+        #createModData(
+        #    data_sets, (data_sets+epoch)*100, (data_sets+epochs)*100)  # 過適合対策
+        optimizer.zero_grad()
+        # 無から生み出すやつ, 適当に数字あげて違うって言われてるみたいなもの（精度保証不可）
+        #lQ, lK, lV = DedN.forward(
+        #    None, None, None, Q.shape[0] # 全部Noneのときはバッチサイズだけ入れとく
+        #)
+        # １つの情報から生み出すやつ, 不十分な質問されて質問を補完させて解答を出すみたいなもの
+        #　Q → K生成 →　Qと生成したKでV生成
+        #_, lK, lV = DedN.forward(
+        #    Q, None, None
+        #)
+        # 推定した情報で補間してQを生成
+        #lQ, _, _ = DedN.forward(
+        #    None, lK, lV
+        #)
+        # 演驛するやつ, 不十分な質問と解答見せて、質問を補完させるみたいなもの
+        #_, lK, _ = DedN.forward(
+        #    Q, None, V
+        #)
+        #_, _, lV = DedN.forward(
+        #    Q, lK, None
+        #)
+        #lQ, _, _ = DedN.forward(
+        #    None, lK, V
+        #)
+        # 通常パターン, 穴埋め解かせるだけ
+        _, lK, _ = DedN.forward(
+            Q, None, V
+        )
+        _, _, lV = DedN.forward(
+            Q, K, None
+        )
+        lQ, _, _ = DedN.forward(
+            None, K, V
+        )
+        err_fn = nn.L1Loss()
+        v_err = err_fn.forward(
+            lV, V
+        ) * data_sets
+        k_err = err_fn.forward(
+            lK, K
+        ) * data_sets
+        q_err = err_fn.forward(
+            lQ, Q
+        ) * data_sets
+        total_err = v_err+k_err+q_err 
+        total_err.backward()
+        torch.nn.utils.clip_grad_norm_(DedN.parameters(), 4.0)
+        optimizer.step()
+        total_errs.append(total_err.item())
+        v_errs.append(v_err.item())
+        k_errs.append(k_err.item())
+        q_errs.append(q_err.item())
+        print(
+            f"Total Error = {total_errs[-1]}\nQ:{q_errs[-1]}\nK:{k_errs[-1]}\nV:{v_errs[-1]}"
             )
-            _, lK, _ = DedN.forward(
-                Q, None, V
-            )
-            lQ, _, _ = DedN.forward(
-                None, K, V
-            )
-            err_fn = nn.L1Loss()
-            err = err_fn.forward(
-                lV, V
-            )+err_fn.forward(
-                lK, K
-            )+err_fn.forward(
-                lQ, Q
-            )
-            mean_err = err * data_sets
-            mean_err.backward()
-            torch.nn.utils.clip_grad_norm_(DedN.parameters(), 4.0)
-            optimizer.step()
-            if i % 10 == 0:
-                mean_errs.append(mean_err.item())  # mean_errの値をリストに追加
-            partial_mean_err += mean_err.item()
-            #print(f"mean err = {mean_err},\n {
-            #      lQ.item()}+{lK.item()} = {lV.item()}?")
-        print(f"mean err = {partial_mean_err/data_sets}")
-    # エポックごとのmean_errをプロット
-    plt.plot(mean_errs)
+    # エポックごとの誤差をプロット
+    plt.plot(total_errs, label='Total Error',color='m')
+    plt.plot(q_errs, label='Q Error', color='r')
+    plt.plot(k_errs, label='K Error', color='g')
+    plt.plot(v_errs, label='V Error', color='b')
     # plt.yscale('log')
     plt.xlabel('Epoch')
-    plt.ylabel('Mean Error')
+    plt.ylabel('Error')
+    plt.legend()
     plt.show()
+    return DedN
 
-train(100)
+model = train(1000)
+# testQ, testK, testV = createModData(1, 10000)
+# Convert_ONNX(model,(testQ,None,testV),['QIn','KIn','VIn'],['QOut','KOut','Vout'],'DeductionNetwork')
