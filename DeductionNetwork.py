@@ -1,13 +1,11 @@
 import matplotlib.pyplot as plt
-import math
-from typing import Sequence
 from math import sqrt
 import torch
 import torch.nn as nn
 import numpy as np
 from numpy.random import randint
 from torch.nn import Module
-from torch import SymInt, Tensor, unsqueeze
+from torch import Tensor
 from torch.nn import functional as F
 from torch.nn import init
 import torch.optim as optim
@@ -36,6 +34,11 @@ def Convert_ONNX(model: Module, dummy_input: Tensor, input_names: list[str], out
     print(" ")
     print('Model has been converted to ONNX')
 
+"""
+モデルに必要なものたち↓
+"""
+
+# 必須ではない（ヘッド数自動で計算してるだけ）
 def get_nearest_divisor(n: int, start: int, prefer_low: bool = True, must_low: bool = True):
     if n % start == 0:
         return start
@@ -54,6 +57,7 @@ def get_nearest_divisor(n: int, start: int, prefer_low: bool = True, must_low: b
     divisors.sort(reverse=not prefer_low)
     return min(divisors, key=lambda x: abs(x - start))
 
+# 必須ではない（ヘッド数自動で計算してるだけ）
 class HeadMatchedMultiHeadAttension(Module):
     def __init__(self, embed_dim: int, num_heads: int, dropout=0.0, bias=True, add_bias_kv=False, add_zero_attn=False, kdim=None, vdim=None, batch_first=False, device=None, dtype=None):
         super().__init__()
@@ -82,6 +86,9 @@ class HeadMatchedMultiHeadAttension(Module):
             is_causal=is_causal
         )
 
+"""
+以下は必須
+"""
 
 class KeyPair(Module):
     def __init__(self, kdim: int, vdim: int, embed_dim: int = None, bias: bool = True ,dropout: float = .0):
@@ -223,15 +230,16 @@ class DeductionNetwork(Module):
     def reset_parameters(self) -> None:
         for param in self.InternalParameters:
             init.kaiming_uniform_(param, mode='fan_in')
-            # init.xavier_uniform_(param,
-            #                     gain=nn.init.calculate_gain('tanh'))
 
     def DedLayerForward(self, Q: Tensor, K: Tensor, layers: list[DeductionNetworkLayer], Ql: Tensor, Kl: Tensor, Vl: Tensor):
         for l in layers:
             Ql, Kl, Vl = l.forward(Q, K, Ql, Kl, Vl)
         return Vl
 
-    def forward(self, Q, K, V, batch_size:int = None):
+    def forward(self, Q: Tensor | None, K: Tensor | None, V: Tensor | None, batch_size: int = None):
+        """
+        Noneになっているテンソルの入力を埋めて返す。Noneではない入力はそのまま返ってくる。
+        """
         assert not (Q == None and K == None and V == None and batch_size == None) ,"If you want to all parameters are None, please at least set any number to batch_size (ex. 1)"
         batch_size, _, _ = Q.shape if Q is not None else K.shape if K is not None else V.shape if V is not None else (batch_size, 0, 0)
         if Q == None:
@@ -290,6 +298,11 @@ class DeductionNetwork(Module):
             )
         return Q, K, V
 
+"""
+モデルに必要なものたちここまで
+
+以下検証用
+"""
 
 # 足し算を検証してみる
 def createAddingData(dataset: int = 100, max_val: float = 100, normalize_base: float = 100):
@@ -312,23 +325,37 @@ def createModData(dataset: int = 100, max_val: float = 100, normalize_base: floa
 
 # ベクトルの差を検証してみる
 def createSubVectorData(dataset: int = 100):
-    # A + B = C ができるかどうか
+    # A - B = C ができるかどうか
     # Q : A, K : B, V : C
     A = np.random.rand(dataset, 1, 2)
     B = np.random.rand(dataset, 1, 2)
     C = A-B
     return torch.tensor(A).float(), torch.tensor(B).float(), torch.tensor(C).float()
 
+# 形状が異なっててもいけるかどうか
+def createUnevenVectorData(dataset,dims:tuple[int,int,int],even_size:int,uneven_size:int,evenPair:tuple[int,int]=(0,1)):
+    # A,B,Cの対応するもの以外の形状が異なっても学習可能かどうか
+    # Q : A, K : B, V : C
+    A = np.random.rand(
+        dataset, even_size if 0 in evenPair else uneven_size, dims[0])
+    B = np.random.rand(
+        dataset, even_size if 1 in evenPair else uneven_size, dims[1])
+    C = np.random.rand(
+        dataset, even_size if 2 in evenPair else uneven_size, dims[2])
+    return torch.tensor(A).float(), torch.tensor(B).float(), torch.tensor(C).float()
+
 def train(epochs: int = 100):
     data_sets = 100
     #Q, K, V = createAddingData(data_sets)
     #print(Q, K, V)
-    DedN = DeductionNetwork(2, 2, 2, 8, 100, 4, 8, dropout=.25) # 特徴次元の４倍くらいの大きさの埋め込み次元があれば良さそう（ヒューリスティック）
+    DedN = DeductionNetwork(5, 3, 2, 8, 5, 4, 8, dropout=.25) 
+    # 特徴次元の４倍くらいの大きさの埋め込み次元があれば良さそう（ヒューリスティック）
     # テーブルサイズを変えてもあまり結果は変わらない。計算時間は微妙に伸びるし収束が遅くなる。変化量が小さくなる。必要最低限でいい。
-    # テーブルサイズの大きさに比例して実行時間が伸びる(1000単位)、テーブルサイズが小さいと精度が下がる。
+    # テーブルサイズの大きさに比例して実行時間が伸びる、テーブルサイズが小さいと精度が下がるかと思われたがそうでもない
     # テーブルサイズが小さいほど精度が上がる！？？？→上がらない・限界をすぐ迎える
-    # テーブルサイズ0でも動く(?)
-    # 結論：特徴次元が大事、テーブルサイズを上げると時間が経つにつれて大きく誤差が減るようになって精度がいい
+    # テーブルサイズ0でも動く→必要なものさえ与えられていれば
+    # 結論：特徴次元が大事
+    # テーブルサイズを上げると時間が経つにつれて大きく誤差が減るようになって精度がいい...というわけでもなさそう
     optimizer = optim.AdamW(DedN.parameters(), lr=.01)
     total_errs = []  # mean_errを保存するリストを作成
     v_errs = []
@@ -336,7 +363,10 @@ def train(epochs: int = 100):
     q_errs = []
     for epoch in range(epochs):
         print(f"Epoch {epoch}")
-        Q, K, V = createSubVectorData(data_sets)
+        # ちゃんと処理できるなら動的なサイズでも学習できる
+        spl = randint(2,4) # 動的なサイズ
+        print(f"shape {spl}") # 動的なサイズ
+        Q, K, V = createUnevenVectorData(data_sets, (5,3,2), spl*2, 2, (0, 2))
         #createModData(
         #    data_sets, (data_sets+epoch)*100, (data_sets+epochs)*100)  # 過適合対策
         optimizer.zero_grad()
@@ -345,34 +375,35 @@ def train(epochs: int = 100):
         #    None, None, None, Q.shape[0] # 全部Noneのときはバッチサイズだけ入れとく
         #)
         # １つの情報から生み出すやつ, 不十分な質問されて質問を補完させて解答を出すみたいなもの
-        #　Q → K生成 →　Qと生成したKでV生成
+        #　Q → K生成 →　Qと生成したKでV生成 → 生成したK,VからQ生成
         #_, lK, lV = DedN.forward(
         #    Q, None, None
         #)
-        # 推定した情報で補間してQを生成
         #lQ, _, _ = DedN.forward(
         #    None, lK, lV
         #)
         # 演驛するやつ, 不十分な質問と解答見せて、質問を補完させるみたいなもの
-        #_, lK, _ = DedN.forward(
-        #    Q, None, V
-        #)
-        #_, _, lV = DedN.forward(
-        #    Q, lK, None
-        #)
-        #lQ, _, _ = DedN.forward(
-        #    None, lK, V
-        #)
-        # 通常パターン, 穴埋め解かせるだけ
         _, lK, _ = DedN.forward(
             Q, None, V
         )
         _, _, lV = DedN.forward(
-            Q, K, None
+            Q, lK, None
         )
         lQ, _, _ = DedN.forward(
-            None, K, V
+            None, lK, V
         )
+        # lK の形状だけ違うので、いい感じに使って関連性持たせてあげる（Kだけ学習しないというのも手）
+        lK = torch.cat((torch.mean(lK[:, spl:, :], dim=1, keepdim=True), torch.mean(lK[:, :spl, :], dim=1, keepdim=True)),dim=1)
+        # 通常パターン, 穴埋め解かせるだけ
+        #_, lK, _ = DedN.forward(
+        #    Q, None, V
+        #)
+        #_, _, lV = DedN.forward(
+        #    Q, K, None
+        #)
+        #lQ, _, _ = DedN.forward(
+        #    None, K, V
+        #)
         err_fn = nn.L1Loss()
         v_err = err_fn.forward(
             lV, V
@@ -387,10 +418,10 @@ def train(epochs: int = 100):
         total_err.backward()
         torch.nn.utils.clip_grad_norm_(DedN.parameters(), 4.0)
         optimizer.step()
-        total_errs.append(total_err.item())
-        v_errs.append(v_err.item())
-        k_errs.append(k_err.item())
-        q_errs.append(q_err.item())
+        total_errs.append(total_err.item()/data_sets)
+        v_errs.append(v_err.item()/data_sets)
+        k_errs.append(k_err.item()/data_sets)
+        q_errs.append(q_err.item()/data_sets)
         print(
             f"Total Error = {total_errs[-1]}\nQ:{q_errs[-1]}\nK:{k_errs[-1]}\nV:{v_errs[-1]}"
             )
@@ -399,13 +430,14 @@ def train(epochs: int = 100):
     plt.plot(q_errs, label='Q Error', color='r')
     plt.plot(k_errs, label='K Error', color='g')
     plt.plot(v_errs, label='V Error', color='b')
-    # plt.yscale('log')
+    plt.yscale('log')
+    plt.xscale('log')
     plt.xlabel('Epoch')
     plt.ylabel('Error')
     plt.legend()
     plt.show()
     return DedN
 
-model = train(1000)
-# testQ, testK, testV = createModData(1, 10000)
+model = train(300)
+# testQ, testK, testV = createModData(1, 10000, 10000)
 # Convert_ONNX(model,(testQ,None,testV),['QIn','KIn','VIn'],['QOut','KOut','Vout'],'DeductionNetwork')
