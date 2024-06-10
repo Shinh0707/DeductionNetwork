@@ -22,7 +22,7 @@ KeyPairクラスは、入力されたキーと値のペアに対して、それ�
 
 ## FeedForwardNetwork
 
-FeedForwardNetworkクラスは、入力されたベクトルに対して、線形変換と活性化関数を適用するモジュールです。
+FeedForwardNetworkクラスは、入力されたベクトルに対して、線形変換と活性化関数を適用するモジュールです。[Attension Is All You Need.](https://arxiv.org/abs/1706.03762)で示されていた構造を元に活性化関数をReLUではなくLeakyReLUを用いて構成した。
 
 ### 仕組み
 
