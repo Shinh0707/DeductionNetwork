@@ -17,11 +17,11 @@
   ${PENC(X,Y,f_h,f_O)=SENC((X,Y),f_h,f_O)\quad\{X\in\R^{M\times{f_X}},Y\in\R^{M\times{f_Y}}\}}$
   ${PENC(X,Y,f_O)=SENC((X,Y),f_O)\quad\{X\in\R^{M\times{f_X}},Y\in\R^{M\times{f_Y}}\}}$
   ${PENC(X,Y)=SENC((X,Y))\quad\{X\in\R^{M\times{f_X}},Y\in\R^{M\times{f_Y}}\}}$
-- [レイヤー正規化](https://arxiv.org/abs/1607.06450)
+- [レイヤー正規化](https://arxiv.org/abs/1607.06450)  
   ${\text{LayerNorm}}$と表記
-- [マルチヘッドアテンション](https://arxiv.org/abs/1706.03762)
+- [マルチヘッドアテンション](https://arxiv.org/abs/1706.03762)  
   ${\text{MHA}}$と表記
-- [アテンション](https://arxiv.org/abs/1706.03762)
+- [アテンション](https://arxiv.org/abs/1706.03762)  
   Scaled Dot-Product Attentionを用いる
   ${\text{ATN}}$と表記
 
@@ -29,69 +29,69 @@
 
 TransformerのPositionalEncodingなしのEncoderを元に作成した。→『Attension Is All You Need』
 
-- 入力
-  ${Q\in\R^{S\times{f_q}}}$：Question
-  ${H\in\R^{S\times{f_h}}}$：Hint
-  ${A\in\R^{S\times{f_a}}}$：Answer
-- 出力
+- 入力  
+  ${Q\in\R^{S\times{f_q}}}$：Question  
+  ${H\in\R^{S\times{f_h}}}$：Hint  
+  ${A\in\R^{S\times{f_a}}}$：Answer  
+- 出力  
   ${R\in\R^{S\times{f_a}}}$：Focused Answer
-- 計算
-  ${A'=\text{MHA}(Q,H,A)}$
-  ${A''=\text{LayerNorm}(A'+\text{ATN}(Q,H,A))}$
-  ${R=\text{LayerNorm}(FF(A'')+A'')}$
+- 計算  
+  ${A'=\text{MHA}(Q,H,A)}$  
+  ${A''=\text{LayerNorm}(A'+\text{ATN}(Q,H,A))}$  
+  ${R=\text{LayerNorm}(FF(A'')+A'')}$  
 
 ## DeductionNetworkPairLayer (DedP)
 
 DeductionNetworkSingleLayerを二重に重ねたもの
 
-- 入力
-  ${Q\in\R^{S\times{f_q}}}$：Question
-  ${H\in\R^{S\times{f_h}}}$：Hint
-  ${Q_T\in\R^{S_T\times{f_q}}}$：QuestionTable
-  ${H_T\in\R^{S_T\times{f_h}}}$：HintTable
-  ${A_T\in\R^{S_T\times{f_a}}}$：AnswerTable
-- 出力
+- 入力  
+  ${Q\in\R^{S\times{f_q}}}$：Question  
+  ${H\in\R^{S\times{f_h}}}$：Hint  
+  ${Q_T\in\R^{S_T\times{f_q}}}$：QuestionTable  
+  ${H_T\in\R^{S_T\times{f_h}}}$：HintTable  
+  ${A_T\in\R^{S_T\times{f_a}}}$：AnswerTable  
+- 出力  
   ${R\in\R^{S\times{f_a}}}$：Deduced Answer
-- 計算
-  ${E_{QH}=\text{PENC}(Q,H)}$
-  ${E_{QHT}=\text{PENC}(Q_T,H_T)}$
+- 計算  
+  ${E_{QH}=\text{PENC}(Q,H)}$  
+  ${E_{QHT}=\text{PENC}(Q_T,H_T)}$  
   ${R=\text{DedS}(Q,H,\text{DedS}(E_{QH},E_{QHT},A_T))}$
 
 ## DeductionNetworkLayer (DedNL)
 
 DedPを複数回適用できるようにしたもの。出力結果をDedNに再度入力することで推定結果が良くなるのではないかという考えのもと作成した。
 
-- 入力
-  ${Q\in\R^{S\times{f_q}}}$：Question
-  ${H\in\R^{S\times{f_h}}}$：Hint
-  ${A\in\R^{S\times{f_a}}}$：Answer
-  ${Q_T\in\R^{S_T\times{f_q}}}$：QuestionTable
-  ${H_T\in\R^{S_T\times{f_h}}}$：HintTable
-  ${A_T\in\R^{S_T\times{f_a}}}$：AnswerTable
-- 出力
-  ${R_Q\in\R^{S\times{f_q}}}$：Deduced Question
-  ${R_H\in\R^{S\times{f_h}}}$：Deduced Hint
-  ${R_A\in\R^{S\times{f_a}}}$：Deduced Answer
-- 計算
-  ${R_Q=\text{DedP}(H,A,H_T,A_T,Q_T)}$
-  ${R_H=\text{DedP}(Q,A,Q_T,A_T,H_T)}$
+- 入力  
+  ${Q\in\R^{S\times{f_q}}}$：Question  
+  ${H\in\R^{S\times{f_h}}}$：Hint  
+  ${A\in\R^{S\times{f_a}}}$：Answer  
+  ${Q_T\in\R^{S_T\times{f_q}}}$：QuestionTable  
+  ${H_T\in\R^{S_T\times{f_h}}}$：HintTable  
+  ${A_T\in\R^{S_T\times{f_a}}}$：AnswerTable  
+- 出力  
+  ${R_Q\in\R^{S\times{f_q}}}$：Deduced Question  
+  ${R_H\in\R^{S\times{f_h}}}$：Deduced Hint  
+  ${R_A\in\R^{S\times{f_a}}}$：Deduced Answer  
+- 計算  
+  ${R_Q=\text{DedP}(H,A,H_T,A_T,Q_T)}$  
+  ${R_H=\text{DedP}(Q,A,Q_T,A_T,H_T)}$  
   ${R_A=\text{DedP}(Q,H,Q_T', H_T', A_T')}$
 
 ## DeductionNetworkStartLayer (DedSt)
 
 入力で足りない部分をテーブルと入力を元に補完する
 
-- 入力
-  ${Q\in\R^{S\times{f_q}}\ \text{or}\ \text{None}}$：Question
-  ${H\in\R^{S\times{f_h}}\ \text{or}\ \text{None}}$：Hint
-  ${A\in\R^{S\times{f_a}}\ \text{or}\ \text{None}}$：Answer
-  ${Q_T\in\R^{S_T\times{f_q}}}$：QuestionTable
-  ${H_T\in\R^{S_T\times{f_h}}}$：HintTable
-  ${A_T\in\R^{S_T\times{f_a}}}$：AnswerTable
-- 出力
-  ${R_Q\in\R^{S\times{f_q}}}$：Deduced Question
-  ${R_H\in\R^{S\times{f_h}}}$：Deduced Hint
-  ${R_A\in\R^{S\times{f_a}}}$：Deduced Answer
+- 入力  
+  ${Q\in\R^{S\times{f_q}}\ \text{or}\ \text{None}}$：Question  
+  ${H\in\R^{S\times{f_h}}\ \text{or}\ \text{None}}$：Hint  
+  ${A\in\R^{S\times{f_a}}\ \text{or}\ \text{None}}$：Answer  
+  ${Q_T\in\R^{S_T\times{f_q}}}$：QuestionTable  
+  ${H_T\in\R^{S_T\times{f_h}}}$：HintTable  
+  ${A_T\in\R^{S_T\times{f_a}}}$：AnswerTable  
+- 出力  
+  ${R_Q\in\R^{S\times{f_q}}}$：Deduced Question  
+  ${R_H\in\R^{S\times{f_h}}}$：Deduced Hint  
+  ${R_A\in\R^{S\times{f_a}}}$：Deduced Answer  
 - 計算
   入力のNoneの数に応じて処理が変化する
 
@@ -236,21 +236,22 @@ DedPを複数回適用できるようにしたもの。出力結果をDedNに再
 
 ## DeductionNetwork (DedN)
 
-- 内部状態
-  ${Q_T\in\R^{S_T\times{f_q}}}$：QuestionTable
-  ${H_T\in\R^{S_T\times{f_h}}}$：HintTable
-  ${A_T\in\R^{S_T\times{f_a}}}$：AnswerTable
-- 入力
-  ${Q\in\R^{S\times{f_q}}\ \text{or}\ \text{None}}$：Question
-  ${H\in\R^{S\times{f_h}}\ \text{or}\ \text{None}}$：Hint
-  ${A\in\R^{S\times{f_a}}\ \text{or}\ \text{None}}$：Answer
-- 出力
-  ${R_Q\in\R^{S\times{f_q}}}$：Deduced Question
-  ${R_H\in\R^{S\times{f_h}}}$：Deduced Hint
-  ${R_A\in\R^{S\times{f_a}}}$：Deduced Answer
+- 内部状態  
+  ${Q_T\in\R^{S_T\times{f_q}}}$：QuestionTable  
+  ${H_T\in\R^{S_T\times{f_h}}}$：HintTable  
+  ${A_T\in\R^{S_T\times{f_a}}}$：AnswerTable  
+- 入力  
+  ${Q\in\R^{S\times{f_q}}\ \text{or}\ \text{None}}$：Question  
+  ${H\in\R^{S\times{f_h}}\ \text{or}\ \text{None}}$：Hint  
+  ${A\in\R^{S\times{f_a}}\ \text{or}\ \text{None}}$：Answer  
+- 出力  
+  ${R_Q\in\R^{S\times{f_q}}}$：Deduced Question  
+  ${R_H\in\R^{S\times{f_h}}}$：Deduced Hint  
+  ${R_A\in\R^{S\times{f_a}}}$：Deduced Answer  
 - 計算
-  ${Q',H',A'=\text{DedSt}(Q,H,A,Q_T', H_T', A_T')}$
-  - 以下の計算を${N}$回実行する${\{n\in{N}\}}$
+  ${Q',H',A'=\text{DedSt}(Q,H,A,Q_T', H_T', A_T')}$  
+  - 以下の計算をN回実行する
+  ${\{n\in{N}\}}$  
   ${Q'',H'',A''=\text{DedNL}_n(Q',H',A',Q_T', H_T', A_T')}$
   ${Q',H',A'\Leftarrow (1-p_q)Q'+p_qQ'',(1-p_h)H'+p_hH'',(1-p_a)A'+p_aA''}$
 
